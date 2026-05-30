@@ -17,9 +17,12 @@ module "security_groups" {
 }
 
 module "iam" {
-  source       = "./modules/iam"
-  project_name = var.project_name
-  environment  = var.environment
+  source            = "./modules/iam"
+  project_name      = var.project_name
+  environment       = var.environment
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+  depends_on        = [module.eks]
 }
 
 module "ecr" {

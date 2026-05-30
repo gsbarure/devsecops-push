@@ -1,0 +1,104 @@
+---
+- name: Build Docker image, push to ECR (automated via IAM role), deploy to EKS
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Get AWS account ID
+      command: aws sts get-caller-identity --query Account --output text
+      register: account_id
+      changed_when: false
+
+    - name: Get ECR URL from Terraform
+      command: terraform output -raw ecr_repository_url
+      args:
+        chdir: "{{ playbook_dir }}/../../terraform"
+      register: ecr_url_raw
+      changed_when: false
+
+    - name: Set facts
+      set_fact:
+        ecr_url:   "{{ ecr_url_raw.stdout }}"
+        image_tag: "1.0.0-{{ lookup('pipe', 'git rev-parse --short HEAD 2>/dev/null || echo ansible') }}"
+
+    - name: Authenticate to ECR using IAM role (no static credentials)
+      shell: >
+        aws ecr get-login-password --region {{ aws_region }} |
+        docker login --username AWS --password-stdin {{ ecr_url }}
+      changed_when: true
+
+    - name: Build Docker image
+      command: docker build -t {{ ecr_url }}:{{ image_tag }} .
+      args:
+        chdir: "{{ playbook_dir }}/../../app"
+      changed_when: true
+
+    - name: Run Trivy image scan before push
+      command: >
+        trivy image
+        --exit-code 0
+        --severity HIGH,CRITICAL
+        --format table
+        {{ ecr_url }}:{{ image_tag }}
+      register: trivy_result
+      changed_when: false
+      ignore_errors: true
+
+    - name: Show Trivy scan results
+      debug:
+        msg: "{{ trivy_result.stdout_lines }}"
+
+    - name: Push image to ECR
+      command: docker push {{ ecr_url }}:{{ image_tag }}
+      changed_when: true
+
+    - name: Tag and push as latest
+      command: "{{ item }}"
+      loop:
+        - "docker tag {{ ecr_url }}:{{ image_tag }} {{ ecr_url }}:latest"
+        - "docker push {{ ecr_url }}:latest"
+      changed_when: true
+
+    - name: Save ECR URL and tag
+      copy:
+        content: "{{ ecr_url }}"
+        dest: "{{ playbook_dir }}/../../.ecr_url"
+        mode: '0644'
+
+    - name: Patch deployment manifest with real ECR image
+      replace:
+        path: "{{ playbook_dir }}/../../kubernetes/deployment.yaml"
+        regexp: 'ACCOUNT_ID\.dkr\.ecr\.us-west-2\.amazonaws\.com/devsecops-app:IMAGE_TAG'
+        replace: "{{ ecr_url }}:{{ image_tag }}"
+
+    - name: Apply Kubernetes manifests
+      command: kubectl apply -f {{ playbook_dir }}/../../kubernetes/{{ item }}
+      loop:
+        - configmap.yaml
+        - secret.yaml
+        - deployment.yaml
+        - service.yaml
+        - hpa.yaml
+      changed_when: true
+
+    - name: Wait for deployment rollout
+      command: kubectl rollout status deployment/devsecops-app -n dev --timeout=300s
+      changed_when: false
+
+    - name: Get running pods
+      command: kubectl get pods -n dev -l app=devsecops-app -o wide
+      register: pods
+      changed_when: false
+
+    - name: Deployment summary
+      debug:
+        msg:
+          - "╔══════════════════════════════════════════╗"
+          - "║  IMAGE PUSHED TO ECR (automated)         ║"
+          - "║  ECR URL  : {{ ecr_url }}:{{ image_tag }}"
+          - "║  Auth     : IAM role (no static keys)    ║"
+          - "║  Trivy    : scan complete (see above)    ║"
+          - "║  App      : deployed to dev namespace    ║"
+          - "║  Port-fwd : kubectl port-forward svc/devsecops-app-svc 8080:80 -n dev"
+          - "╚══════════════════════════════════════════╝"
+          - "{{ pods.stdout_lines }}"

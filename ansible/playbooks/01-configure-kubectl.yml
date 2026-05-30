@@ -1,0 +1,37 @@
+---
+- name: Configure kubectl for EKS
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Get EKS cluster name from Terraform output
+      command: terraform output -raw eks_cluster_name
+      args:
+        chdir: "{{ playbook_dir }}/../../terraform"
+      register: eks_cluster_name
+      changed_when: false
+
+    - name: Update kubeconfig
+      command: >
+        aws eks update-kubeconfig
+        --region {{ aws_region }}
+        --name {{ eks_cluster_name.stdout }}
+      changed_when: true
+
+    - name: Verify kubectl connection
+      command: kubectl get nodes
+      register: nodes_output
+      changed_when: false
+
+    - name: Show cluster nodes
+      debug:
+        msg: "{{ nodes_output.stdout_lines }}"
+
+    - name: Verify namespaces exist
+      command: kubectl get namespaces
+      register: ns_output
+      changed_when: false
+
+    - name: Show namespaces
+      debug:
+        msg: "{{ ns_output.stdout_lines }}"

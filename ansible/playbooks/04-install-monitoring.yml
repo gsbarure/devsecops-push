@@ -1,0 +1,57 @@
+---
+- name: Install Prometheus + Grafana on EKS via Helm
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Add Prometheus Helm repo
+      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      changed_when: false
+      ignore_errors: true
+
+    - name: Update Helm repos
+      command: helm repo update
+      changed_when: false
+
+    - name: Install kube-prometheus-stack via Helm
+      command: >
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack
+        --namespace {{ monitoring_namespace }}
+        --create-namespace
+        --values {{ playbook_dir }}/../../monitoring/prometheus-values.yaml
+        --wait
+        --timeout 10m
+      changed_when: true
+
+    - name: Wait for Grafana to be ready
+      command: kubectl rollout status deployment/monitoring-grafana -n {{ monitoring_namespace }} --timeout=300s
+      changed_when: false
+
+    - name: Get Grafana LoadBalancer URL
+      command: >
+        kubectl get svc monitoring-grafana -n {{ monitoring_namespace }}
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+      register: grafana_url
+      changed_when: false
+      retries: 10
+      delay: 15
+      until: grafana_url.stdout != ""
+      ignore_errors: true
+
+    - name: Save Grafana URL to file
+      copy:
+        content: "http://{{ grafana_url.stdout | default('localhost:3000') }}"
+        dest: "{{ playbook_dir }}/../../.grafana_url"
+        mode: '0644'
+
+    - name: Grafana access details
+      debug:
+        msg:
+          - "╔══════════════════════════════════════════╗"
+          - "║  GRAFANA INSTALLED                       ║"
+          - "║  URL      : http://{{ grafana_url.stdout | default('use port-forward') }}"
+          - "║  Username : admin"
+          - "║  Password : {{ grafana_admin_password }}"
+          - "║  Port-fwd : kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring"
+          - "║  Dashboards: EKS, Nodes, Pods, Jenkins   ║"
+          - "╚══════════════════════════════════════════╝"

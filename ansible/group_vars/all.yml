@@ -1,0 +1,20 @@
+aws_region: "us-west-2"
+cluster_name: "devsecops-eks-cluster"
+project_name: "devsecops"
+
+# Jenkins
+jenkins_namespace: "jenkins"
+jenkins_chart_version: "5.1.0"
+jenkins_admin_password: "admin123"
+
+# SonarQube
+sonarqube_namespace: "sonarqube"
+sonarqube_chart_version: "10.4.0"
+
+# Monitoring
+monitoring_namespace: "monitoring"
+grafana_admin_password: "admin123"
+
+# App
+app_namespace: "dev"
+ecr_repo_name: "devsecops-app"

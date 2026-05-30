@@ -1,0 +1,73 @@
+---
+- name: Destroy all DevSecOps resources
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Warning — 10 second countdown
+      pause:
+        prompt: "⚠️  This will DESTROY ALL resources. Press Ctrl+C to cancel. Continuing in 10s..."
+        seconds: 10
+
+    - name: Uninstall Jenkins
+      command: helm uninstall jenkins -n jenkins
+      ignore_errors: true
+      changed_when: true
+
+    - name: Uninstall SonarQube
+      command: helm uninstall sonarqube -n sonarqube
+      ignore_errors: true
+      changed_when: true
+
+    - name: Uninstall Monitoring
+      command: helm uninstall monitoring -n monitoring
+      ignore_errors: true
+      changed_when: true
+
+    - name: Delete Kubernetes app resources
+      command: kubectl delete -f {{ playbook_dir }}/../../kubernetes/ --ignore-not-found=true
+      ignore_errors: true
+      changed_when: true
+
+    - name: Delete namespaces
+      command: kubectl delete namespace {{ item }} --ignore-not-found=true
+      loop:
+        - jenkins
+        - sonarqube
+        - dev
+        - monitoring
+        - amazon-cloudwatch
+      ignore_errors: true
+      changed_when: true
+
+    - name: Destroy Terraform infrastructure
+      command: terraform destroy -auto-approve -input=false
+      args:
+        chdir: "{{ playbook_dir }}/../../terraform"
+      changed_when: true
+
+    - name: Destroy bootstrap resources
+      command: terraform destroy -auto-approve -input=false
+      args:
+        chdir: "{{ playbook_dir }}/../../terraform/bootstrap"
+      changed_when: true
+
+    - name: Clean up local temp files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ playbook_dir }}/../../.jenkins_url"
+        - "{{ playbook_dir }}/../../.sonar_url"
+        - "{{ playbook_dir }}/../../.grafana_url"
+        - "{{ playbook_dir }}/../../.ecr_url"
+        - "{{ playbook_dir }}/../../terraform/tfplan"
+
+    - name: Destroy complete
+      debug:
+        msg:
+          - "╔══════════════════════════════════════════╗"
+          - "║  ALL RESOURCES DESTROYED                 ║"
+          - "║  Your AWS account is clean.              ║"
+          - "║  No further charges will occur.          ║"
+          - "╚══════════════════════════════════════════╝"

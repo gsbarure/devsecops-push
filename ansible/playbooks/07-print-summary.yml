@@ -1,0 +1,89 @@
+---
+- name: Print all URLs and validation commands
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Read Jenkins URL
+      slurp:
+        src: "{{ playbook_dir }}/../../.jenkins_url"
+      register: jenkins_url_file
+      ignore_errors: true
+
+    - name: Read SonarQube URL
+      slurp:
+        src: "{{ playbook_dir }}/../../.sonar_url"
+      register: sonar_url_file
+      ignore_errors: true
+
+    - name: Read Grafana URL
+      slurp:
+        src: "{{ playbook_dir }}/../../.grafana_url"
+      register: grafana_url_file
+      ignore_errors: true
+
+    - name: Set URL facts
+      set_fact:
+        jenkins_url:  "{{ jenkins_url_file.content  | default('') | b64decode | trim }}"
+        sonar_url:    "{{ sonar_url_file.content    | default('') | b64decode | trim }}"
+        grafana_url:  "{{ grafana_url_file.content  | default('') | b64decode | trim }}"
+
+    - name: Print full summary
+      debug:
+        msg:
+          - ""
+          - "╔══════════════════════════════════════════════════════════════╗"
+          - "║          DEVSECOPS EKS — DEPLOYMENT COMPLETE                ║"
+          - "╠══════════════════════════════════════════════════════════════╣"
+          - "║  JENKINS                                                     ║"
+          - "║  URL      : {{ jenkins_url }}"
+          - "║  User     : admin / admin123"
+          - "║  What you see:                                               ║"
+          - "║    - Pipeline dashboard with 12 stages                       ║"
+          - "║    - Stage: Git Checkout → Terraform Validate → SonarQube   ║"
+          - "║    - Stage: Quality Gate → Docker Build → Trivy Scans       ║"
+          - "║    - Stage: ECR Push → K8s Deploy → Verification            ║"
+          - "║    - Trivy scan results as downloadable artifacts            ║"
+          - "╠══════════════════════════════════════════════════════════════╣"
+          - "║  SONARQUBE                                                   ║"
+          - "║  URL      : {{ sonar_url }}"
+          - "║  User     : admin / admin"
+          - "║  What you see:                                               ║"
+          - "║    - Code quality dashboard for devsecops-app project        ║"
+          - "║    - Bugs, Vulnerabilities, Code Smells count                ║"
+          - "║    - Coverage %, Duplications %                              ║"
+          - "║    - Quality Gate: PASSED or FAILED (blocks pipeline)        ║"
+          - "║    - Security Hotspots tab                                   ║"
+          - "╠══════════════════════════════════════════════════════════════╣"
+          - "║  GRAFANA                                                     ║"
+          - "║  URL      : {{ grafana_url }}"
+          - "║  User     : admin / admin123"
+          - "║  Port-fwd : kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring"
+          - "║  What you see:                                               ║"
+          - "║    - EKS cluster CPU/Memory/Network graphs                   ║"
+          - "║    - Node health, disk usage, pod restarts                   ║"
+          - "║    - Jenkins build metrics dashboard                         ║"
+          - "║    - Namespace-level resource usage                          ║"
+          - "╠══════════════════════════════════════════════════════════════╣"
+          - "║  TRIVY (pipeline artifacts in Jenkins)                       ║"
+          - "║  What you see:                                               ║"
+          - "║    - trivy-terraform.txt  → IaC misconfigs (HIGH/CRITICAL)  ║"
+          - "║    - trivy-fs.txt         → Filesystem CVEs                  ║"
+          - "║    - trivy-image.txt      → Docker image CVEs (fails build)  ║"
+          - "║    - trivy-k8s.txt        → K8s manifest security issues     ║"
+          - "╠══════════════════════════════════════════════════════════════╣"
+          - "║  APPLICATION                                                 ║"
+          - "║  Port-fwd : kubectl port-forward svc/devsecops-app-svc 8080:80 -n dev"
+          - "║  Health   : curl http://localhost:8080/health                ║"
+          - "║  Ready    : curl http://localhost:8080/ready                 ║"
+          - "╚══════════════════════════════════════════════════════════════╝"
+          - ""
+          - "VALIDATION COMMANDS:"
+          - "  kubectl get nodes"
+          - "  kubectl get pods --all-namespaces"
+          - "  kubectl get pods -n dev"
+          - "  kubectl get hpa -n dev"
+          - "  kubectl get svc -n jenkins"
+          - "  kubectl get svc -n sonarqube"
+          - "  kubectl get pods -n monitoring"
+          - "  trivy image $(terraform -chdir=terraform output -raw ecr_repository_url):latest"

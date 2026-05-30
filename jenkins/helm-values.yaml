@@ -7,6 +7,7 @@ controller:
     limits:
       cpu: "2000m"
       memory: "4Gi"
+
   installPlugins:
     - git:latest
     - workflow-aggregator:latest
@@ -17,8 +18,14 @@ controller:
     - pipeline-stage-view:latest
     - blueocean:latest
     - credentials-binding:latest
+    - amazon-ecr:latest
+
   javaOpts: "-Xms512m -Xmx2048m"
   adminPassword: "admin123"
+
+  # IRSA annotation — Jenkins uses the IAM role directly, no static keys needed
+  podAnnotations:
+    eks.amazonaws.com/role-arn: "JENKINS_IRSA_ARN_PLACEHOLDER"
 
 persistence:
   enabled: true
@@ -35,7 +42,11 @@ agent:
     limits:
       cpu: "1000m"
       memory: "1Gi"
+  podAnnotations:
+    eks.amazonaws.com/role-arn: "JENKINS_IRSA_ARN_PLACEHOLDER"
 
 serviceAccount:
   create: false
   name: jenkins
+  annotations:
+    eks.amazonaws.com/role-arn: "JENKINS_IRSA_ARN_PLACEHOLDER"

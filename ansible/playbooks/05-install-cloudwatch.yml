@@ -1,0 +1,48 @@
+---
+- name: Enable CloudWatch Container Insights
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Get EKS cluster name
+      command: terraform output -raw eks_cluster_name
+      args:
+        chdir: "{{ playbook_dir }}/../../terraform"
+      register: eks_cluster_name
+      changed_when: false
+
+    - name: Download CloudWatch agent manifest
+      get_url:
+        url: "https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/quickstart/cwagent-fluent-bit-quickstart.yaml"
+        dest: "/tmp/cwagent-quickstart.yaml"
+        mode: '0644'
+
+    - name: Patch manifest with cluster name and region
+      replace:
+        path: /tmp/cwagent-quickstart.yaml
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: '{{cluster_name}}',  replace: "{{ eks_cluster_name.stdout }}" }
+        - { regexp: '{{region_name}}',   replace: "{{ aws_region }}" }
+        - { regexp: '{{http_port}}',     replace: '2020' }
+        - { regexp: '{{read_from_head}}', replace: 'Off' }
+
+    - name: Apply CloudWatch agent
+      command: kubectl apply -f /tmp/cwagent-quickstart.yaml
+      changed_when: true
+
+    - name: Verify CloudWatch agent pods
+      command: kubectl get pods -n amazon-cloudwatch
+      register: cw_pods
+      changed_when: false
+
+    - name: CloudWatch status
+      debug:
+        msg:
+          - "╔══════════════════════════════════════════╗"
+          - "║  CLOUDWATCH CONTAINER INSIGHTS ENABLED   ║"
+          - "║  View logs: AWS Console → CloudWatch      ║"
+          - "║  → Container Insights → {{ eks_cluster_name.stdout }}"
+          - "╚══════════════════════════════════════════╝"
+          - "{{ cw_pods.stdout_lines }}"

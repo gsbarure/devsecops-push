@@ -1,0 +1,67 @@
+---
+- name: Install SonarQube on EKS via Helm
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Add SonarQube Helm repo
+      command: helm repo add sonarqube https://SonarSource.github.io/helm-chart-sonarqube
+      changed_when: false
+      ignore_errors: true
+
+    - name: Update Helm repos
+      command: helm repo update
+      changed_when: false
+
+    - name: Install SonarQube via Helm
+      command: >
+        helm upgrade --install sonarqube sonarqube/sonarqube
+        --namespace {{ sonarqube_namespace }}
+        --create-namespace
+        --values {{ playbook_dir }}/../../sonarqube/helm-values.yaml
+        --version {{ sonarqube_chart_version }}
+        --wait
+        --timeout 15m
+      changed_when: true
+
+    - name: Wait for SonarQube pod to be ready
+      command: kubectl rollout status deployment/sonarqube-sonarqube -n {{ sonarqube_namespace }} --timeout=600s
+      changed_when: false
+
+    - name: Get SonarQube LoadBalancer URL
+      command: >
+        kubectl get svc sonarqube-sonarqube -n {{ sonarqube_namespace }}
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+      register: sonar_url
+      changed_when: false
+      retries: 10
+      delay: 15
+      until: sonar_url.stdout != ""
+
+    - name: Save SonarQube URL to file
+      copy:
+        content: "http://{{ sonar_url.stdout }}:9000"
+        dest: "{{ playbook_dir }}/../../.sonar_url"
+        mode: '0644'
+
+    - name: Wait for SonarQube API to be ready
+      uri:
+        url: "http://{{ sonar_url.stdout }}:9000/api/system/status"
+        method: GET
+        status_code: 200
+      register: sonar_status
+      retries: 20
+      delay: 15
+      until: sonar_status.json.status == "UP"
+      ignore_errors: true
+
+    - name: SonarQube access details
+      debug:
+        msg:
+          - "╔══════════════════════════════════════════╗"
+          - "║  SONARQUBE INSTALLED                     ║"
+          - "║  URL      : http://{{ sonar_url.stdout }}:9000"
+          - "║  Username : admin"
+          - "║  Password : admin  (change on first login)"
+          - "║  Status   : {{ sonar_status.json.status | default('starting') }}"
+          - "╚══════════════════════════════════════════╝"
