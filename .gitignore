@@ -1,0 +1,13 @@
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+*.pem
+*.key
+.env
+node_modules/
+coverage/
+trivy-*.txt

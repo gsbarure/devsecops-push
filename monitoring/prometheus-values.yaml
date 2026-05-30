@@ -1,0 +1,49 @@
+prometheus:
+  prometheusSpec:
+    retention: "15d"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          resources:
+            requests:
+              storage: 20Gi
+    additionalScrapeConfigs:
+      - job_name: jenkins
+        static_configs:
+          - targets: ['jenkins.jenkins.svc.cluster.local:8080']
+        metrics_path: /prometheus
+
+grafana:
+  enabled: true
+  adminPassword: "admin123"
+  persistence:
+    enabled: true
+    storageClassName: gp2
+    size: 5Gi
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          folder: DevSecOps
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+      node-exporter:
+        gnetId: 1860
+        revision: 27
+        datasource: Prometheus
+      jenkins:
+        gnetId: 9964
+        revision: 1
+        datasource: Prometheus
+
+alertmanager:
+  enabled: true

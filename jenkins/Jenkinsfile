@@ -1,0 +1,193 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+  - name: tools
+    image: alpine/k8s:1.29.2
+    command: [cat]
+    tty: true
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+"""
+    }
+  }
+
+  environment {
+    AWS_REGION      = 'us-west-2'
+    ECR_REPO        = credentials('ECR_REPO_URL')
+    SONAR_URL       = credentials('SONAR_URL')
+    SONAR_TOKEN     = credentials('SONAR_TOKEN')
+    CLUSTER_NAME    = 'devsecops-eks-cluster'
+    IMAGE_TAG       = "${BUILD_NUMBER}-${GIT_COMMIT[0..7]}"
+    IMAGE_FULL      = "${ECR_REPO}:${IMAGE_TAG}"
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    timeout(time: 60, unit: 'MINUTES')
+    disableConcurrentBuilds()
+  }
+
+  stages {
+
+    stage('Git Checkout') {
+      steps {
+        checkout scm
+        sh 'git log --oneline -5'
+      }
+    }
+
+    stage('Terraform Validate') {
+      steps {
+        container('tools') {
+          dir('terraform') {
+            sh 'terraform init -backend=false'
+            sh 'terraform validate'
+            sh 'terraform fmt -check -recursive'
+          }
+        }
+      }
+    }
+
+    stage('Trivy Terraform Scan') {
+      steps {
+        container('tools') {
+          sh '''
+            wget -qO- https://github.com/aquasecurity/trivy/releases/download/v0.50.0/trivy_0.50.0_Linux-64bit.tar.gz | tar xz
+            mv trivy /usr/local/bin/
+            trivy config --exit-code 0 --severity HIGH,CRITICAL terraform/ | tee trivy-terraform.txt
+          '''
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'trivy-terraform.txt', allowEmptyArchive: true } }
+    }
+
+    stage('SonarQube Scan') {
+      steps {
+        container('tools') {
+          withSonarQubeEnv('SonarQube') {
+            sh '''
+              sonar-scanner \
+                -Dsonar.projectKey=devsecops-app \
+                -Dsonar.sources=app \
+                -Dsonar.host.url=${SONAR_URL} \
+                -Dsonar.login=${SONAR_TOKEN}
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      steps {
+        timeout(time: 5, unit: 'MINUTES') {
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        container('docker') {
+          dir('app') {
+            sh "docker build -t ${IMAGE_FULL} ."
+          }
+        }
+      }
+    }
+
+    stage('Trivy Filesystem Scan') {
+      steps {
+        container('tools') {
+          sh "trivy fs --exit-code 0 --severity HIGH,CRITICAL app/ | tee trivy-fs.txt"
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'trivy-fs.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Trivy Image Scan') {
+      steps {
+        container('tools') {
+          sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE_FULL} | tee trivy-image.txt"
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'trivy-image.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Push to ECR') {
+      steps {
+        container('docker') {
+          sh '''
+            aws ecr get-login-password --region ${AWS_REGION} | \
+              docker login --username AWS --password-stdin ${ECR_REPO}
+            docker push ${IMAGE_FULL}
+            docker tag ${IMAGE_FULL} ${ECR_REPO}:latest
+            docker push ${ECR_REPO}:latest
+          '''
+        }
+      }
+    }
+
+    stage('Update K8s Manifest') {
+      steps {
+        container('tools') {
+          sh "sed -i 's|IMAGE_TAG|${IMAGE_TAG}|g' kubernetes/deployment.yaml"
+          sh "sed -i 's|ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com|${ECR_REPO%/*}|g' kubernetes/deployment.yaml"
+        }
+      }
+    }
+
+    stage('Trivy K8s Manifest Scan') {
+      steps {
+        container('tools') {
+          sh "trivy config --exit-code 0 --severity HIGH,CRITICAL kubernetes/ | tee trivy-k8s.txt"
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'trivy-k8s.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Deploy to EKS') {
+      steps {
+        container('tools') {
+          sh "aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}"
+          sh "kubectl apply -f kubernetes/configmap.yaml"
+          sh "kubectl apply -f kubernetes/secret.yaml"
+          sh "kubectl apply -f kubernetes/deployment.yaml"
+          sh "kubectl apply -f kubernetes/service.yaml"
+          sh "kubectl apply -f kubernetes/hpa.yaml"
+          sh "kubectl rollout status deployment/devsecops-app -n dev --timeout=300s"
+        }
+      }
+    }
+
+    stage('Post Deployment Verification') {
+      steps {
+        container('tools') {
+          sh "kubectl get pods -n dev -l app=devsecops-app"
+          sh "kubectl get svc -n dev"
+          sh "kubectl describe deployment devsecops-app -n dev"
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo "Pipeline succeeded — image: ${IMAGE_FULL}" }
+    failure { echo "Pipeline failed — check logs above" }
+    always  { cleanWs() }
+  }
+}

@@ -1,0 +1,25 @@
+service:
+  type: LoadBalancer
+
+persistence:
+  enabled: true
+  storageClass: "gp2"
+  size: "20Gi"
+
+resources:
+  requests:
+    cpu: "400m"
+    memory: "2Gi"
+  limits:
+    cpu: "2000m"
+    memory: "4Gi"
+
+postgresql:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClass: "gp2"
+    size: "10Gi"
+
+sonarProperties:
+  sonar.forceAuthentication: "true"
