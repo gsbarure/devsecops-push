@@ -16,7 +16,6 @@ module "security_groups" {
   vpc_cidr     = var.vpc_cidr
 }
 
-# Base IAM roles — no OIDC dependency
 module "iam" {
   source       = "./modules/iam"
   project_name = var.project_name
@@ -30,7 +29,6 @@ module "ecr" {
   ecr_repo_name = var.ecr_repo_name
 }
 
-# EKS uses IAM roles — no circular dependency now
 module "eks" {
   source             = "./modules/eks"
   project_name       = var.project_name
@@ -48,16 +46,28 @@ module "eks" {
   cluster_role_arn   = module.iam.cluster_role_arn
 }
 
-# Jenkins IRSA — created AFTER EKS (needs OIDC provider)
+# OIDC provider lives in root — after EKS, before IRSA
+data "tls_certificate" "eks" {
+  url        = module.eks.oidc_issuer_url
+  depends_on = [module.eks]
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = module.eks.oidc_issuer_url
+  tags            = { Name = "${var.project_name}-eks-oidc" }
+  depends_on      = [module.eks]
+}
+
 module "iam_irsa" {
   source            = "./modules/iam-irsa"
   project_name      = var.project_name
-  oidc_provider_arn = module.eks.oidc_provider_arn
-  oidc_provider_url = module.eks.oidc_provider_url
-  depends_on        = [module.eks]
+  oidc_provider_arn = aws_iam_openid_connect_provider.eks.arn
+  oidc_provider_url = replace(module.eks.oidc_issuer_url, "https://", "")
+  depends_on        = [aws_iam_openid_connect_provider.eks]
 }
 
-# K8s namespaces + RBAC
 module "k8s_setup" {
   source       = "./modules/k8s-setup"
   project_name = var.project_name

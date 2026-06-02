@@ -13,11 +13,16 @@ resource "aws_eks_cluster" "main" {
   enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   encryption_config {
-    provider { key_arn = aws_kms_key.eks.arn }
+    provider {
+      key_arn = aws_kms_key.eks.arn
+    }
     resources = ["secrets"]
   }
 
-  tags = { Name = "${var.project_name}-eks-cluster", Environment = var.environment }
+  tags = {
+    Name        = "${var.project_name}-eks-cluster"
+    Environment = var.environment
+  }
 }
 
 resource "aws_kms_key" "eks" {
@@ -40,7 +45,9 @@ resource "aws_eks_node_group" "main" {
     max_size     = var.node_max_size
   }
 
-  update_config { max_unavailable = 1 }
+  update_config {
+    max_unavailable = 1
+  }
 
   launch_template {
     id      = aws_launch_template.node.id
@@ -74,16 +81,4 @@ resource "aws_launch_template" "node" {
     resource_type = "instance"
     tags          = { Name = "${var.project_name}-eks-node" }
   }
-}
-
-# ── OIDC Provider for IRSA ────────────────────
-data "tls_certificate" "eks" {
-  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "eks" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
-  tags            = { Name = "${var.project_name}-eks-oidc" }
 }
