@@ -6,15 +6,32 @@ terraform {
     dynamodb_table = "devsecops-tfstate-lock"
     encrypt        = true
   }
+
   required_version = ">= 1.5.0"
+
   required_providers {
-    aws        = { source = "hashicorp/aws";        version = "~> 5.0" }
-    kubernetes = { source = "hashicorp/kubernetes";  version = "~> 2.0" }
-    helm       = { source = "hashicorp/helm";        version = "~> 2.0" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
-provider "aws" { region = var.aws_region }
+provider "aws" {
+  region = var.aws_region
+}
 
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint

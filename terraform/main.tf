@@ -16,13 +16,11 @@ module "security_groups" {
   vpc_cidr     = var.vpc_cidr
 }
 
+# Base IAM roles — no OIDC dependency
 module "iam" {
-  source            = "./modules/iam"
-  project_name      = var.project_name
-  environment       = var.environment
-  oidc_provider_arn = module.eks.oidc_provider_arn
-  oidc_provider_url = module.eks.oidc_provider_url
-  depends_on        = [module.eks]
+  source       = "./modules/iam"
+  project_name = var.project_name
+  environment  = var.environment
 }
 
 module "ecr" {
@@ -32,6 +30,7 @@ module "ecr" {
   ecr_repo_name = var.ecr_repo_name
 }
 
+# EKS uses IAM roles — no circular dependency now
 module "eks" {
   source             = "./modules/eks"
   project_name       = var.project_name
@@ -49,6 +48,16 @@ module "eks" {
   cluster_role_arn   = module.iam.cluster_role_arn
 }
 
+# Jenkins IRSA — created AFTER EKS (needs OIDC provider)
+module "iam_irsa" {
+  source            = "./modules/iam-irsa"
+  project_name      = var.project_name
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+  depends_on        = [module.eks]
+}
+
+# K8s namespaces + RBAC
 module "k8s_setup" {
   source       = "./modules/k8s-setup"
   project_name = var.project_name
